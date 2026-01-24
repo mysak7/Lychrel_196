@@ -8,7 +8,7 @@
 #include <omp.h> // Vyžaduje OpenMP
 
 // --- KONFIGURACE ---
-const std::string STATE_FILE = "lychrel.state4";
+const std::string STATE_FILE = "lychrel_brutal.state";
 const int SAVE_INTERVAL_SEC = 600; 
 const int LOG_INTERVAL_SEC = 2;    
 
@@ -52,7 +52,7 @@ public:
         // PARALELNÍ ČÁST - VŽDY ZAPNUTA
         // static schedule je nejrychlejší pro tento typ operací (stejná práce pro všechny)
         #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < n; ++i) {
+        for (long long i = 0; i < (long long)n; ++i) {
             p_out[i] = p_in[i] + p_in[n - 1 - i];
         }
 
