@@ -25,4 +25,4 @@ fi
 
 NP=${1:-1}
 echo "Running with $NP processes on $LATEST_DUMP"
-mpirun --oversubscribe --bind-to none -np $NP ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
+mpirun --oversubscribe --use-hwthread-cpus --bind-to hwthread -np $NP ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
