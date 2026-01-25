@@ -23,5 +23,5 @@ if [ -z "$LATEST_DUMP" ]; then
     LATEST_DUMP="dump.196.0"
 fi
 
-echo "Running with 4 processes on $LATEST_DUMP"
-mpirun --bind-to core --report-bindings -np 4 ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
+echo "Running with 2 processes on $LATEST_DUMP"
+mpirun --bind-to core --report-bindings -np 2 ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
