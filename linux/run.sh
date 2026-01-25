@@ -24,4 +24,4 @@ if [ -z "$LATEST_DUMP" ]; then
 fi
 
 echo "Running with 6 processes on $LATEST_DUMP"
-mpirun --bind-to core --report-bindings -np 1 ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
+mpirun --bind-to core --report-bindings -np 6 ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
