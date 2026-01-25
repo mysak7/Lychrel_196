@@ -1,0 +1,22 @@
+/*
+  Copyright © 2011-2013 Romain Dolbeau <romain@dolbeau.org>
+  
+  This file is part of p196_mpi.
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License version 2 as
+  published by the Free Software Foundation.
+  
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include <stdlib.h>
+
+int read_isf(const char* filename, size_t *full_size, size_t *start, size_t *step, char* current);
+int write_isf(const char* filename, size_t full_size, size_t start, size_t step, char* current);
