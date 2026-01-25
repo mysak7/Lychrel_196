@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <cstring>
 #include <cmath>
+#include <immintrin.h>
 
 // Modern C++ replacement for p196_mpi
 // Uses std::thread for parallelization and a Carry-Lookahead approach for addition.
@@ -65,15 +66,10 @@ public:
         file.seekg(0, std::ios::beg);
 
         digits.resize(size);
-        // Read into a temp buffer then reverse, or read directly?
-        // Reading directly into vector is fastest, then we fill digits.
-        // Actually, we need to reverse the order. File is Big Endian.
-        
         std::vector<char> buffer(size);
         if (!file.read(buffer.data(), size)) return false;
 
         // Convert ASCII to int and reverse
-        // #pragma omp parallel for // Optional if we had OpenMP
         for (size_t i = 0; i < size; ++i) {
             digits[i] = buffer[size - 1 - i] - '0';
         }
@@ -109,6 +105,208 @@ struct ThreadContext {
     bool terminate = false;
 };
 
+// AVX2 Kernel function (Adapted from p196_mpi)
+void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, size_t end, size_t full_size, bool& out_gen, bool& out_prop) {
+    size_t i = start;
+    uint8_t carry = 0;
+    bool all_nines = true;
+
+    // Constants
+    const __m256i pb = _mm256_set1_epi8(10);
+    const __m256i pz = _mm256_setzero_si256();
+    // Shuffling vector for mirror (inter-lane shuffle not supported by _mm256_shuffle_epi8 directly)
+    const __m256i pe = _mm256_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                                       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+    const __m256i p246 = _mm256_set1_epi8(246);
+    const __m256i p9 = _mm256_set1_epi8(9);
+
+    size_t last_safe = (end >= 128) ? end - 128 : start;
+    
+    // Align 'i' if possible? No, 'current' allocation might not be aligned to 32 bytes.
+    // We use loadu (unaligned).
+
+    for (; i <= last_safe; i += 128) { // <= because we process i to i+128
+        if (i + 128 > end) break; // Extra safety
+
+        __m256i o1, o2, o1b, o2b, o1c, o2c, o1d, o2d;
+        __m256i pc, pcb, pcc, pcd;
+        __m256i r, rb, rc, rd;
+        __m256i mask, maskb, maskc, maskd;
+        __m256i temp, tempb, tempc, tempd;
+        __m256i c1to2, c2to3, c3to4;
+        __m256i pc2, pc2b, pc2c, pc2d;
+        int cc;
+
+        // Load regular
+        o1  = _mm256_loadu_si256((const __m256i*)(current + i + 0));
+        o1b = _mm256_loadu_si256((const __m256i*)(current + i + 32));
+        o1c = _mm256_loadu_si256((const __m256i*)(current + i + 64));
+        o1d = _mm256_loadu_si256((const __m256i*)(current + i + 96));
+
+        // Load mirrored (reverse)
+        // Indices: full_size - (i + 32), etc.
+        o2  = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 32)));
+        o2b = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 64)));
+        o2c = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 96)));
+        o2d = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 128)));
+
+        // Mirror the 32-bytes loaded
+        o2  = _mm256_shuffle_epi8(o2 ,pe);
+        o2b = _mm256_shuffle_epi8(o2b,pe);
+        o2c = _mm256_shuffle_epi8(o2c,pe);
+        o2d = _mm256_shuffle_epi8(o2d,pe);
+        
+        o2  = _mm256_permute2x128_si256(o2,o2,0x01);
+        o2b = _mm256_permute2x128_si256(o2b,o2b,0x01);
+        o2c = _mm256_permute2x128_si256(o2c,o2c,0x01);
+        o2d = _mm256_permute2x128_si256(o2d,o2d,0x01);
+
+        // Incoming carry
+        pc = _mm256_inserti128_si256(pz, _mm_cvtsi32_si128((int)carry), 0);
+        pcb = pz; pcc = pz; pcd = pz;
+        carry = 0;
+
+        // Step 1: Add
+        o1  = _mm256_add_epi8(o1 ,p246);
+        o1b = _mm256_add_epi8(o1b,p246);
+        o1c = _mm256_add_epi8(o1c,p246);
+        o1d = _mm256_add_epi8(o1d,p246);
+
+        r  = _mm256_add_epi64(o1 , o2 );
+        rb = _mm256_add_epi64(o1b, o2b);
+        rc = _mm256_add_epi64(o1c, o2c);
+        rd = _mm256_add_epi64(o1d, o2d);
+
+        r  = _mm256_add_epi64(r , pc );
+        rb = _mm256_add_epi64(rb, pcb);
+        rc = _mm256_add_epi64(rc, pcc);
+        rd = _mm256_add_epi64(rd, pcd);
+
+        // Carry propagation loop
+        do {
+             mask  = _mm256_cmpgt_epi8(pz, r);
+             maskb = _mm256_cmpgt_epi8(pz, rb);
+             maskc = _mm256_cmpgt_epi8(pz, rc);
+             maskd = _mm256_cmpgt_epi8(pz, rd);
+
+             r  = _mm256_sub_epi8(r , _mm256_and_si256(mask , p246));
+             rb = _mm256_sub_epi8(rb, _mm256_and_si256(maskb, p246));
+             rc = _mm256_sub_epi8(rc, _mm256_and_si256(maskc, p246));
+             rd = _mm256_sub_epi8(rd, _mm256_and_si256(maskd, p246));
+
+             mask  = _mm256_cmpgt_epi8(r , p9);
+             maskb = _mm256_cmpgt_epi8(rb, p9);
+             maskc = _mm256_cmpgt_epi8(rc, p9);
+             maskd = _mm256_cmpgt_epi8(rd, p9);
+
+             pc  = _mm256_sub_epi8(pz, mask );
+             pcb = _mm256_sub_epi8(pz, maskb);
+             pcc = _mm256_sub_epi8(pz, maskc);
+             pcd = _mm256_sub_epi8(pz, maskd);
+
+             temp  = _mm256_and_si256(pb, mask ); 
+             tempb = _mm256_and_si256(pb, maskb);
+             tempc = _mm256_and_si256(pb, maskc); 
+             tempd = _mm256_and_si256(pb, maskd);
+
+             r  = _mm256_sub_epi8(r , temp );
+             rb = _mm256_sub_epi8(rb, tempb);
+             rc = _mm256_sub_epi8(rc, tempc);
+             rd = _mm256_sub_epi8(rd, tempd);
+
+             c1to2 = _mm256_srli_si256(pc, 15);
+             c1to2 = _mm256_permute2x128_si256(c1to2,pz,0x21);
+             c2to3 = _mm256_srli_si256(pcb, 15);
+             c2to3 = _mm256_permute2x128_si256(c2to3,pz,0x21);
+             c3to4 = _mm256_srli_si256(pcc, 15);
+             c3to4 = _mm256_permute2x128_si256(c3to4,pz,0x21);
+
+             // Extract final carry from pcd
+             // emulates non-existent 256bits VPEXTRB
+             carry += _mm_extract_epi8(_mm256_extracti128_si256(pcd, 1), 15);
+
+             pc2  = _mm256_srli_si256(pc, 15);
+             pc2  = _mm256_permute2x128_si256(pc2,pz,0x02);
+             pc2b = _mm256_srli_si256(pcb, 15);
+             pc2b = _mm256_permute2x128_si256(pc2b,pz,0x02);
+             pc2c = _mm256_srli_si256(pcc, 15);
+             pc2c = _mm256_permute2x128_si256(pc2c,pz,0x02);
+             pc2d = _mm256_srli_si256(pcd, 15);
+             pc2d = _mm256_permute2x128_si256(pc2d,pz,0x02);
+
+             pc  = _mm256_slli_si256(pc , 1);
+             pc  = _mm256_add_epi8(pc , pc2 );
+             pcb = _mm256_slli_si256(pcb, 1);
+             pcb = _mm256_add_epi8(pcb, pc2b);
+             pcc = _mm256_slli_si256(pcc, 1);
+             pcc = _mm256_add_epi8(pcc, pc2c);
+             pcd = _mm256_slli_si256(pcd, 1);
+             pcd = _mm256_add_epi8(pcd, pc2d);
+
+             pcb = _mm256_add_epi8(pcb, c1to2);
+             pcc = _mm256_add_epi8(pcc, c2to3);
+             pcd = _mm256_add_epi8(pcd, c3to4);
+
+             cc = _mm256_testz_si256(pc,pc) && _mm256_testz_si256(pcb,pcb) && 
+                  _mm256_testz_si256(pcc,pcc) && _mm256_testz_si256(pcd,pcd);
+
+             // If not done, prepare for next iteration
+             if (!cc) {
+                 r  = _mm256_add_epi64(r ,p246);
+                 rb = _mm256_add_epi64(rb,p246);
+                 rc = _mm256_add_epi64(rc,p246);
+                 rd = _mm256_add_epi64(rd,p246);
+
+                 r  = _mm256_add_epi64(r , pc );
+                 rb = _mm256_add_epi64(rb, pcb);
+                 rc = _mm256_add_epi64(rc, pcc);
+                 rd = _mm256_add_epi64(rd, pcd);
+                 // And loop back to checks...
+             }
+        } while (!cc);
+
+        // Store
+        _mm256_storeu_si256((__m256i*)(next + i + 0), r );
+        _mm256_storeu_si256((__m256i*)(next + i + 32), rb);
+        _mm256_storeu_si256((__m256i*)(next + i + 64), rc);
+        _mm256_storeu_si256((__m256i*)(next + i + 96), rd);
+
+        // Update all_nines check
+        // Check if any digit != 9
+        // Compare with 9
+        __m256i neq9 = _mm256_andnot_si256(_mm256_cmpeq_epi8(r, p9), _mm256_set1_epi8(-1));
+        if (!_mm256_testz_si256(neq9, neq9)) all_nines = false;
+        if (all_nines) {
+             neq9 = _mm256_andnot_si256(_mm256_cmpeq_epi8(rb, p9), _mm256_set1_epi8(-1));
+             if (!_mm256_testz_si256(neq9, neq9)) all_nines = false;
+        }
+        if (all_nines) {
+             neq9 = _mm256_andnot_si256(_mm256_cmpeq_epi8(rc, p9), _mm256_set1_epi8(-1));
+             if (!_mm256_testz_si256(neq9, neq9)) all_nines = false;
+        }
+        if (all_nines) {
+             neq9 = _mm256_andnot_si256(_mm256_cmpeq_epi8(rd, p9), _mm256_set1_epi8(-1));
+             if (!_mm256_testz_si256(neq9, neq9)) all_nines = false;
+        }
+    }
+
+    // Scalar fallback
+    for (; i < end; ++i) {
+        uint8_t sum = current[i] + current[full_size - 1 - i] + carry;
+        if (sum >= 10) {
+            next[i] = sum - 10;
+            carry = 1;
+        } else {
+            next[i] = sum;
+            carry = 0;
+        }
+        if (next[i] != 9) all_nines = false;
+    }
+
+    out_gen = (carry == 1);
+    out_prop = all_nines;
+}
+
 void thread_worker(int id, ThreadContext* ctx) {
     while (true) {
         ctx->barrier->wait(); // Wait for start of iteration
@@ -123,91 +321,31 @@ void thread_worker(int id, ThreadContext* ctx) {
         size_t end = std::min(start + block_size, N);
 
         if (start >= N) {
-            // Nothing to do for this thread
-            ctx->status[id] = {false, true}; // Propagates? Doesn't matter, won't receive carry beyond capacity
-            // Wait for phase 2
+            ctx->status[id] = {false, true}; 
             ctx->barrier->wait();
-            // Wait for phase 3
             ctx->barrier->wait();
             continue;
         }
 
-        // --- Phase 1: Add and Local Carry Propagation ---
+        // --- Phase 1: Add and Local Carry Propagation (AVX2) ---
         const uint8_t* in = ctx->current->digits.data();
         uint8_t* out = ctx->next->digits.data();
 
-        // Check if we need to extend 'next' vector. Main thread handles resize.
-        // Assuming 'next' is already sized to N. (Extensions handled later)
-
-        bool gen = false;
-        bool prop = true; // Assume propagates until proven otherwise
-
-        // We process the block.
-        // sum[i] = in[i] + in[N-1-i]
-        // We can do a single pass to compute sum and local carries.
-        // To determine 'prop', we need to see if a carry entering at 'start' would reach 'end'.
+        bool gen, prop;
+        process_block_avx2(in, out, start, end, N, gen, prop);
         
-        uint8_t local_carry = 0;
-        
-        for (size_t i = start; i < end; ++i) {
-            uint8_t sum = in[i] + in[N - 1 - i] + local_carry;
-            if (sum >= 10) {
-                out[i] = sum - 10;
-                local_carry = 1;
-            } else {
-                out[i] = sum;
-                local_carry = 0;
-            }
-        }
-        
-        // 'local_carry' is now the carry generated by this block purely from addition.
-        gen = (local_carry == 1);
-
-        // Now compute 'prop'.
-        // Propagates if all digits in the output block are 9s?
-        // If we add 1 to the first digit, does it ripple to the end?
-        // This is true if out[i] == 9 for all i in [start, end).
-        // Wait, if out[k] != 9, the ripple stops there.
-        // Optimization: Check this during the loop?
-        // It's cheaper to check separately or integrate.
-        // Let's integrate.
-        // Actually, the previous loop calculated the "base" result (assuming carry_in=0).
-        // We need to know if an incoming carry would propagate through.
-        
-        // Re-checking propagation condition:
-        prop = true;
-        for (size_t i = start; i < end; ++i) {
-            if (out[i] != 9) {
-                prop = false;
-                break;
-            }
-        }
-
         ctx->status[id] = {gen, prop};
 
         ctx->barrier->wait(); // Wait for all to finish Phase 1
 
         // --- Phase 2: Sequential Carry Scan (Main Thread or Single Thread) ---
-        // We let thread 0 do it, others wait.
-        // Or we could do a parallel scan, but for ~16-32 threads, sequential is instant.
-        
         if (id == 0) {
             ctx->carry_in[0] = 0;
             for (size_t i = 0; i < num_blocks; ++i) {
                 // Carry into next block depends on current block
-                // CarryOut_i = Gen_i || (Prop_i && CarryIn_i)
                 bool c_out = ctx->status[i].generated || (ctx->status[i].propagates && (ctx->carry_in[i] == 1));
                 if (i + 1 < ctx->carry_in.size()) {
                     ctx->carry_in[i+1] = c_out ? 1 : 0;
-                } else if (c_out) {
-                    // Overflow from the very last block!
-                    // This means the number grew in size.
-                    // We handle this by resizing 'next' later.
-                    // For now, we just note it.
-                    // But wait, 'next' size is N. If we have a carry out of N, 
-                    // we need to append 1. Thread 0 can't resize vector while others are using data() pointers?
-                    // Actually, data pointers are valid if we reserved enough.
-                    // But we'll handle growth after the barrier.
                 }
             }
         }
@@ -218,6 +356,7 @@ void thread_worker(int id, ThreadContext* ctx) {
         if (ctx->carry_in[id] == 1) {
             // Add 1 to the start of our block and ripple
             uint8_t c = 1;
+            // This ripple is likely short, scalar is fine.
             for (size_t i = start; i < end; ++i) {
                 uint8_t val = out[i] + c;
                 if (val >= 10) {
@@ -229,9 +368,6 @@ void thread_worker(int id, ThreadContext* ctx) {
                     break; // Stopped propagating
                 }
             }
-            // We don't need to worry about c propagating out of 'end', 
-            // because if it did, 'prop' would have been true, 
-            // and the next block would already have carry_in=1.
         }
         
         ctx->barrier->wait(); // Finish iteration
@@ -244,24 +380,17 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         filename = argv[1]; // Use provided filename
     } else {
-        // Try to find latest dump
-        // Simplification: Require filename argument or assume standard
         std::cerr << "Usage: " << argv[0] << " <dump_file>" << std::endl;
         return 1;
     }
 
     // Parse iteration count from filename "dump.196.ITER"
-    size_t start_num = 0;
     size_t iter_count = 0;
     size_t last_dot = filename.find_last_of('.');
-    size_t first_dot = filename.find_first_of('.');
-    if (last_dot != std::string::npos && first_dot != std::string::npos && last_dot != first_dot) {
+    if (last_dot != std::string::npos) {
          try {
              iter_count = std::stoull(filename.substr(last_dot + 1));
-             start_num = std::stoull(filename.substr(first_dot + 1, last_dot - first_dot - 1));
-         } catch (...) {
-             std::cerr << "Could not parse iteration count from filename. Using 0." << std::endl;
-         }
+         } catch (...) {}
     }
 
     std::cout << "Loading " << filename << " (Iter: " << iter_count << ")..." << std::endl;
@@ -272,7 +401,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    num1.digits.reserve(num1.digits.size() + 10000); // Pre-allocate some growth
+    num1.digits.reserve(num1.digits.size() + 10000); 
     num2.digits.reserve(num1.digits.size() + 10000);
 
     unsigned int num_threads = std::thread::hardware_concurrency();
@@ -283,8 +412,8 @@ int main(int argc, char** argv) {
     ThreadContext ctx;
     ctx.num_threads = num_threads;
     ctx.status.resize(num_threads);
-    ctx.carry_in.resize(num_threads + 1); // +1 for the overflow carry
-    Barrier barrier(num_threads + 1); // +1 for main thread
+    ctx.carry_in.resize(num_threads + 1); 
+    Barrier barrier(num_threads + 1);
     ctx.barrier = &barrier;
 
     std::vector<std::thread> threads;
@@ -300,55 +429,31 @@ int main(int argc, char** argv) {
     std::cout << "Starting calculation..." << std::endl;
 
     while (true) {
-        // Prepare for iteration
-        // num1 is current, num2 is next
         ctx.current = &num1;
         ctx.next = &num2;
         
-        // Ensure destination has size
         size_t cur_size = num1.digits.size();
         if (num2.digits.size() < cur_size) {
             num2.digits.resize(cur_size);
         }
         
-        // Release threads for Phase 1
-        barrier.wait();
+        barrier.wait(); // Phase 1
+        barrier.wait(); // Phase 2
+        barrier.wait(); // Phase 3
+        barrier.wait(); // Finish
 
-        // Threads doing Phase 1...
-        
-        // Wait for Phase 1 completion
-        barrier.wait();
-        
-        // Threads doing Phase 2 (Sequential) wait for thread 0...
-        
-        // Wait for Phase 2 completion
-        barrier.wait();
-        
-        // Threads doing Phase 3...
-        
-        // Wait for Phase 3 completion
-        barrier.wait();
-
-        // Check for final carry overflow (stored in carry_in[num_threads] during Phase 2? No, wait)
-        // In Phase 2, thread 0 calculated carry_in array.
-        // We need to check ctx.carry_in[num_threads].
+        // Final carry
         if (ctx.carry_in[num_threads]) {
             num2.digits.push_back(1);
         }
 
-        // Swap buffers
-        std::swap(num1.digits, num2.digits); // Efficient swap
-        // num2 (old num1) might have wrong size now, but we resize it at start of loop
-        // Actually, we should resize num2 to num1.size() to be safe or just let it grow.
-        // Better to resize at top.
-
+        std::swap(num1.digits, num2.digits);
         iter_count++;
 
         // Periodic Save/Log
-        if (iter_count % 100 == 0) { // Check frequently
+        if (iter_count % 100 == 0) { 
             auto now = std::chrono::steady_clock::now();
             
-            // Save Check
             auto elapsed_save = std::chrono::duration_cast<std::chrono::seconds>(now - last_save).count();
             if (elapsed_save >= SAVE_INTERVAL_SECONDS) {
                 std::string new_filename = "dump.196." + std::to_string(iter_count);
@@ -362,13 +467,12 @@ int main(int argc, char** argv) {
                 }
             }
             
-            // Speed Log (every 2 seconds)
             auto elapsed_log = std::chrono::duration_cast<std::chrono::seconds>(now - last_log).count();
             if (elapsed_log >= 2) {
                 double dt = std::chrono::duration<double>(now - last_log).count();
                 double speed = (iter_count - last_log_iter) / dt;
-                std::cout << "Iter: " << iter_count
-                          << " | Digits: " << num1.digits.size()
+                std::cout << "Iter: " << iter_count 
+                          << " | Digits: " << num1.digits.size() 
                           << " | Speed: " << std::fixed << std::setprecision(2) << speed << " iter/s" << std::endl;
                 last_log = now;
                 last_log_iter = iter_count;
@@ -376,7 +480,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Cleanup (unreachable infinite loop)
     ctx.terminate = true;
     barrier.wait();
     for (auto& t : threads) t.join();
