@@ -294,6 +294,8 @@ int main(int argc, char** argv) {
 
     auto start_time = std::chrono::steady_clock::now();
     auto last_save = start_time;
+    auto last_log = start_time;
+    size_t last_log_iter = iter_count;
 
     std::cout << "Starting calculation..." << std::endl;
 
@@ -343,14 +345,15 @@ int main(int argc, char** argv) {
         iter_count++;
 
         // Periodic Save/Log
-        if (iter_count % 1000 == 0) {
+        if (iter_count % 100 == 0) { // Check frequently
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_save).count();
-            if (elapsed >= SAVE_INTERVAL_SECONDS) {
+            
+            // Save Check
+            auto elapsed_save = std::chrono::duration_cast<std::chrono::seconds>(now - last_save).count();
+            if (elapsed_save >= SAVE_INTERVAL_SECONDS) {
                 std::string new_filename = "dump.196." + std::to_string(iter_count);
                 std::cout << "Saving to " << new_filename << " (Digits: " << num1.digits.size() << ")..." << std::endl;
                 if (num1.save(new_filename)) {
-                    // Optionally delete old file
                     std::remove(filename.c_str());
                     filename = new_filename;
                     last_save = now;
@@ -359,11 +362,16 @@ int main(int argc, char** argv) {
                 }
             }
             
-            // Speed Log
-            if (iter_count % 10000 == 0) {
-                double total_time = std::chrono::duration<double>(now - start_time).count();
-                std::cout << "Iter: " << iter_count << " | Len: " << num1.digits.size() 
-                          << " | Avg Speed: " << (total_time > 0 ? (iter_count / total_time) : 0) << " iter/s" << std::endl;
+            // Speed Log (every 2 seconds)
+            auto elapsed_log = std::chrono::duration_cast<std::chrono::seconds>(now - last_log).count();
+            if (elapsed_log >= 2) {
+                double dt = std::chrono::duration<double>(now - last_log).count();
+                double speed = (iter_count - last_log_iter) / dt;
+                std::cout << "Iter: " << iter_count
+                          << " | Digits: " << num1.digits.size()
+                          << " | Speed: " << std::fixed << std::setprecision(2) << speed << " iter/s" << std::endl;
+                last_log = now;
+                last_log_iter = iter_count;
             }
         }
     }
