@@ -21,6 +21,8 @@
 #include <string.h>
 #if defined(_WIN32) && defined(_MSC_VER)
 #include "XGetopt.h"
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
 #else
 #include <unistd.h>
 #endif
@@ -30,6 +32,16 @@
 #include <errno.h>
 
 #include <mpi.h>
+
+#if defined(_WIN32) && defined(_MSC_VER)
+static int posix_memalign(void **memptr, size_t alignment, size_t size) {
+    *memptr = _aligned_malloc(size, alignment);
+    if (*memptr == NULL) {
+        return errno;
+    }
+    return 0;
+}
+#endif
 
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 9

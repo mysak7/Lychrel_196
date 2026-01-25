@@ -18,6 +18,10 @@ if "%MSMPI_LIB64%"=="" (
     exit /b 1
 )
 
+rem Remove trailing backslashes from MSMPI paths to avoid quoting issues
+if "%MSMPI_INC:~-1%"=="\" set "MSMPI_INC=%MSMPI_INC:~0,-1%"
+if "%MSMPI_LIB64:~-1%"=="\" set "MSMPI_LIB64=%MSMPI_LIB64:~0,-1%"
+
 if not exist p196_standalone (
     echo p196_standalone directory missing!
     exit /b 1

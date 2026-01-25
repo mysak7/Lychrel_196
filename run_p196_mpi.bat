@@ -32,13 +32,13 @@ echo Resuming from %LATEST_DUMP%
 
 echo Starting p196_mpi with 4 processes...
 echo Press Ctrl+C to stop.
-echo.
+echo(
 
 rem Run p196_mpi using mpiexec
 rem Check if mpiexec exists
 where mpiexec >nul 2>nul
-if %errorlevel% neq 0 (
-    echo mpiexec not found. Please install Microsoft MPI (MS-MPI).
+if errorlevel 1 (
+    echo mpiexec not found. Please install Microsoft MPI ^(MS-MPI^).
     exit /b 1
 )
 
