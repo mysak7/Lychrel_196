@@ -23,7 +23,7 @@ if %errorlevel% neq 0 (
 echo Compiling p196_standalone...
 rem AVX2 is essential here.
 rem Added PREFETCH_LOAD_TYPE define and suppressed warning C4477.
-cl /nologo /O2 /Arch:AVX2 /wd4477 /D AVX2 /D ALIGN_AVX2 /D PREFETCH_DISTANCE=256 /D STREAMING_STORES /D PREFETCH_LOAD_TYPE=_MM_HINT_T0 /I p196_standalone p196_standalone/p196_mpi.c p196_standalone/mpi_stub.c p196_standalone/isf.c p196_standalone/mydump.c /Tc p196_standalone/XGetopt.cpp /Fe:p196_standalone.exe
+cl /nologo /O2 /arch:AVX2 /wd4477 /D AVX2 /D ALIGN_AVX2 /D PREFETCH_DISTANCE=256 /D STREAMING_STORES /D PREFETCH_LOAD_TYPE=_MM_HINT_T0 /I p196_standalone p196_standalone/p196_mpi.c p196_standalone/mpi_stub.c p196_standalone/isf.c p196_standalone/mydump.c p196_standalone/XGetopt.cpp /Fe:p196_standalone.exe
 if %errorlevel% neq 0 (
     echo Compilation of p196_standalone failed!
     exit /b 1
