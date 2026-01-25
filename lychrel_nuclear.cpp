@@ -170,8 +170,9 @@ int main() {
         std::cout << "[INFO] Zacinam od nuly (196)" << std::endl;
     }
 
-    auto last_log = std::chrono::steady_clock::now();
-    auto last_save = last_log;
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_log = start_time;
+    auto last_save = start_time;
     size_t last_len = num.size();
 
     // 4. Hlavní smyčka
@@ -189,8 +190,17 @@ int main() {
                 size_t len = num.size();
                 double speed = (len - last_len) / secs;
                 
-                std::cout << "Iter: " << iter << " | Cifer: " << len 
-                          << " | Rychlost: " << std::fixed << std::setprecision(0) << speed << " cif/s" 
+                // Výpočet času běhu
+                auto total_duration = now - start_time;
+                auto hours = std::chrono::duration_cast<std::chrono::hours>(total_duration);
+                total_duration -= hours;
+                auto minutes = std::chrono::duration_cast<std::chrono::minutes>(total_duration);
+                total_duration -= minutes;
+                auto seconds = std::chrono::duration_cast<std::chrono::seconds>(total_duration);
+
+                std::cout << "Iter: " << iter << " | Len: " << len
+                          << " | Rychlost: " << std::fixed << std::setprecision(0) << speed << " cif/s"
+                          << " | Cas: " << hours.count() << "h " << minutes.count() << "m " << seconds.count() << "s"
                           << std::endl;
                 
                 last_log = now;

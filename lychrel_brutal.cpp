@@ -8,7 +8,7 @@
 #include <omp.h> // Vyžaduje OpenMP
 
 // --- KONFIGURACE ---
-const std::string STATE_FILE = "lychrel_brutal.state";
+const std::string STATE_FILE = "lychrel.state";
 const int SAVE_INTERVAL_SEC = 600; 
 const int LOG_INTERVAL_SEC = 2;    
 

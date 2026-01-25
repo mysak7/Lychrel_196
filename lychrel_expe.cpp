@@ -11,7 +11,7 @@
 
 // --- KONFIGURACE ---
 const std::string STATE_FILE = "lychrel.state";
-// #define PARANOID_CHECK // Odkomentujte pro kontrolu správnosti (zpomalí 100x!)
+#define PARANOID_CHECK // Odkomentujte pro kontrolu správnosti (zpomalí 100x!)
 
 // Dolbeau Magic Constants
 // Každý bajt obsahuje 246 (0xF6). 10 + 246 = 256 (Carry).
