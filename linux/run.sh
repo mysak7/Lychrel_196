@@ -1,9 +1,11 @@
 #!/bin/bash
 # Example run script
 
-if [ ! -f "p196_mpi" ]; then
-    echo "Compiling..."
-    make
+# Always ensure binary is up to date
+echo "Checking compilation..."
+if ! make; then
+    echo "Compilation failed!"
+    exit 1
 fi
 
 # Check for dump files
@@ -23,6 +25,14 @@ if [ -z "$LATEST_DUMP" ]; then
     LATEST_DUMP="dump.196.0"
 fi
 
-NP=${1:-1}
+# Auto-detect available processing units (vCPUs)
+if command -v nproc >/dev/null; then
+    DEFAULT_NP=$(nproc)
+else
+    DEFAULT_NP=1
+fi
+
+NP=${1:-$DEFAULT_NP}
 echo "Running with $NP processes on $LATEST_DUMP"
+# Use hardware threads and bind to them for better EPYC utilization
 mpirun --oversubscribe --use-hwthread-cpus --bind-to hwthread -np $NP ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
