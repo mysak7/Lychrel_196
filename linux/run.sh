@@ -23,5 +23,6 @@ if [ -z "$LATEST_DUMP" ]; then
     LATEST_DUMP="dump.196.0"
 fi
 
-echo "Running with 1 processes on $LATEST_DUMP"
-mpirun --bind-to core --report-bindings -np 1 ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
+NP=${1:-1}
+echo "Running with $NP processes on $LATEST_DUMP"
+mpirun --bind-to core --report-bindings -np $NP ./p196_mpi -i $LATEST_DUMP -d 0 -m 0 -M 0 -D 1000000
