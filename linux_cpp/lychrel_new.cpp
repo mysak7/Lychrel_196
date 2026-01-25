@@ -16,6 +16,7 @@
 
 // Modern C++ replacement for p196_mpi
 // Uses std::thread for parallelization and a Carry-Lookahead approach for addition.
+// Optimized with AVX2.
 
 // --- Barrier Implementation (C++11 compatible) ---
 class Barrier {
@@ -115,6 +116,7 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
     const __m256i pb = _mm256_set1_epi8(10);
     const __m256i pz = _mm256_setzero_si256();
     // Shuffling vector for mirror (inter-lane shuffle not supported by _mm256_shuffle_epi8 directly)
+    // Memory order: 0..15. We want register to reverse.
     const __m256i pe = _mm256_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
                                        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
     const __m256i p246 = _mm256_set1_epi8(246);
@@ -122,11 +124,8 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
 
     size_t last_safe = (end >= 128) ? end - 128 : start;
     
-    // Align 'i' if possible? No, 'current' allocation might not be aligned to 32 bytes.
-    // We use loadu (unaligned).
-
     for (; i <= last_safe; i += 128) { // <= because we process i to i+128
-        if (i + 128 > end) break; // Extra safety
+        if (i + 128 > end) break; // Extra safety check
 
         __m256i o1, o2, o1b, o2b, o1c, o2c, o1d, o2d;
         __m256i pc, pcb, pcc, pcd;
@@ -144,7 +143,6 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
         o1d = _mm256_loadu_si256((const __m256i*)(current + i + 96));
 
         // Load mirrored (reverse)
-        // Indices: full_size - (i + 32), etc.
         o2  = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 32)));
         o2b = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 64)));
         o2c = _mm256_loadu_si256((const __m256i*)(current + full_size - (i + 96)));
@@ -222,7 +220,6 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
              c3to4 = _mm256_permute2x128_si256(c3to4,pz,0x21);
 
              // Extract final carry from pcd
-             // emulates non-existent 256bits VPEXTRB
              carry += _mm_extract_epi8(_mm256_extracti128_si256(pcd, 1), 15);
 
              pc2  = _mm256_srli_si256(pc, 15);
@@ -250,7 +247,6 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
              cc = _mm256_testz_si256(pc,pc) && _mm256_testz_si256(pcb,pcb) && 
                   _mm256_testz_si256(pcc,pcc) && _mm256_testz_si256(pcd,pcd);
 
-             // If not done, prepare for next iteration
              if (!cc) {
                  r  = _mm256_add_epi64(r ,p246);
                  rb = _mm256_add_epi64(rb,p246);
@@ -261,7 +257,6 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
                  rb = _mm256_add_epi64(rb, pcb);
                  rc = _mm256_add_epi64(rc, pcc);
                  rd = _mm256_add_epi64(rd, pcd);
-                 // And loop back to checks...
              }
         } while (!cc);
 
@@ -272,8 +267,6 @@ void process_block_avx2(const uint8_t* current, uint8_t* next, size_t start, siz
         _mm256_storeu_si256((__m256i*)(next + i + 96), rd);
 
         // Update all_nines check
-        // Check if any digit != 9
-        // Compare with 9
         __m256i neq9 = _mm256_andnot_si256(_mm256_cmpeq_epi8(r, p9), _mm256_set1_epi8(-1));
         if (!_mm256_testz_si256(neq9, neq9)) all_nines = false;
         if (all_nines) {
@@ -417,8 +410,13 @@ int main(int argc, char** argv) {
     ctx.barrier = &barrier;
 
     std::vector<std::thread> threads;
-    for (unsigned int i = 0; i < num_threads; ++i) {
-        threads.emplace_back(thread_worker, i, &ctx);
+    try {
+        for (unsigned int i = 0; i < num_threads; ++i) {
+            threads.emplace_back(thread_worker, i, &ctx);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Thread creation failed: " << e.what() << std::endl;
+        return 1;
     }
 
     auto start_time = std::chrono::steady_clock::now();
@@ -429,26 +427,33 @@ int main(int argc, char** argv) {
     std::cout << "Starting calculation..." << std::endl;
 
     while (true) {
-        ctx.current = &num1;
-        ctx.next = &num2;
-        
-        size_t cur_size = num1.digits.size();
-        if (num2.digits.size() < cur_size) {
-            num2.digits.resize(cur_size);
-        }
-        
-        barrier.wait(); // Phase 1
-        barrier.wait(); // Phase 2
-        barrier.wait(); // Phase 3
-        barrier.wait(); // Finish
+        try {
+            ctx.current = &num1;
+            ctx.next = &num2;
+            
+            size_t cur_size = num1.digits.size();
+            // Critical Fix: Ensure num2 matches cur_size exactly to avoid junk digits
+            if (num2.digits.size() != cur_size) {
+                num2.digits.resize(cur_size);
+            }
+            
+            barrier.wait(); // Phase 1
+            barrier.wait(); // Phase 2
+            barrier.wait(); // Phase 3
+            barrier.wait(); // Finish
 
-        // Final carry
-        if (ctx.carry_in[num_threads]) {
-            num2.digits.push_back(1);
-        }
+            // Final carry
+            if (ctx.carry_in[num_threads]) {
+                num2.digits.push_back(1);
+            }
 
-        std::swap(num1.digits, num2.digits);
-        iter_count++;
+            std::swap(num1.digits, num2.digits);
+            iter_count++;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception in main loop: " << e.what() << std::endl;
+            // Optionally try to save
+            break;
+        }
 
         // Periodic Save/Log
         if (iter_count % 100 == 0) { 
