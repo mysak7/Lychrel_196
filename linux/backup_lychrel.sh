@@ -27,11 +27,9 @@ if ! mountpoint -q "$DEST_DIR"; then
     fi
 fi
 
-# Standard copy command
-# -r: recursive
-# -v: verbose (shows files being copied)
-# -u: update (only copy if source is newer or destination is missing)
-cp -rvu "$SOURCE_DIR"* "$DEST_DIR"
+# Move dump files
+# -v: verbose (shows files being moved)
+mv -v "$SOURCE_DIR"dump.196* "$DEST_DIR"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Backup completed successfully!${NC}"
