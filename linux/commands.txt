@@ -1,0 +1,5 @@
+git clone https://github.com/mysak7/Lychrel_196
+
+cd ~
+git clone https://github.com/mysak7/Lychrel_196
+cd ~/Lychrel_196/linux
