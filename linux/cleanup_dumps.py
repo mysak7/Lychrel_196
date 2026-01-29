@@ -5,7 +5,7 @@ import glob
 # --- CONFIGURATION ---
 # Set to False to actually delete files. 
 # Set to True to just print what would happen.
-DRY_RUN = True  
+DRY_RUN = False  
 # ---------------------
 
 def get_iteration(filename):
