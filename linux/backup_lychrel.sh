@@ -27,13 +27,9 @@ if ! mountpoint -q "$DEST_DIR"; then
     fi
 fi
 
-# RSYNC COMMAND EXPLAINED:
-# -r: recursive
-# -v: verbose
-# --size-only: checksums are slow on mounts; size check is faster
-# --no-perms --no-owner --no-group: Essential for WebDAV mounts (prevents permission errors)
-# --progress: shows progress bar
-rsync -rv --size-only --no-perms --no-owner --no-group --progress "$SOURCE_DIR" "$DEST_DIR"
+# Move dump files
+# -v: verbose (shows files being moved)
+mv -v "$SOURCE_DIR"dump.196* "$DEST_DIR"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Backup completed successfully!${NC}"
