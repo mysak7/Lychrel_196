@@ -27,13 +27,11 @@ if ! mountpoint -q "$DEST_DIR"; then
     fi
 fi
 
-# RSYNC COMMAND EXPLAINED:
+# Standard copy command
 # -r: recursive
-# -v: verbose
-# --size-only: checksums are slow on mounts; size check is faster
-# --no-perms --no-owner --no-group: Essential for WebDAV mounts (prevents permission errors)
-# --progress: shows progress bar
-rsync -rv --inplace --size-only --no-perms --no-owner --no-group --progress "$SOURCE_DIR" "$DEST_DIR"
+# -v: verbose (shows files being copied)
+# -u: update (only copy if source is newer or destination is missing)
+cp -rvu "$SOURCE_DIR"* "$DEST_DIR"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Backup completed successfully!${NC}"
