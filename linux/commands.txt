@@ -3,3 +3,13 @@ git clone https://github.com/mysak7/Lychrel_196
 cd ~
 git clone https://github.com/mysak7/Lychrel_196
 cd ~/Lychrel_196/linux
+
+https://www.perplexity.ai/search/algo-is-slowing-down-important-Tiat4PgETI6bc9RR2AqRuQ
+
+tmux new -s ly
+
+Detach by pressing Ctrl+B, then release and press D.
+
+tmux attach -t ly
+
+ssh root@45.77.201.76
